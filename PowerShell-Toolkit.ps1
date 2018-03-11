@@ -95,46 +95,71 @@ Function Start-GlobalVariables {
     General notes
 #>
 Function Write-Log {
-    Param (
-        [Parameter(Mandatory=$true)]
-        $Message,
-        [Parameter(Mandatory=$true)]
-        $Component,
-        [Parameter(Mandatory=$true)]
-        $Type
+    [CmdletBinding()]
+    Param(
+        [parameter(Mandatory=$true,
+                   ValueFromPipeline=$true,
+                   ValueFromPipelineByPropertyName=$true)]
+        [String]$Message,
+
+        [parameter()]
+        [String]$Component = $MyInvocation.MyCommand.Name,
+
+        [parameter()]
+        [int]$Type = 1
     )
 
-    # Create eventlog source if not exist
-    if(![System.Diagnostics.EventLog]::SourceExists("PowerShell-Toolkit")) { 
-        [System.Diagnostics.EventLog]::CreateEventSource("PowerShell-Toolkit",'Application') 
-    }
+    Begin {}
 
-    try {
-        # Build time variables
-        $time = Get-Date -Format "HH:mm:ss.fff"
-        [string]$tzb = (Get-WmiObject -Query "Select Bias from Win32_TimeZone").Bias
+    Process {
+        Write-Debug "Starting Write-Log Process"
+        Write-Verbose "Starting Process"
 
-        # Build log string
-        $toLog = "<![LOG[{0}]LOG]!><time=`"{1}`" date=`"{2}`" component=`"{3}`" context=`"`" type=`"{4}`" thread=`"{5}`" file=`"`">" -f ($Message), ("$time+$($tzb.SubString(1,3))"), (Get-Date -Format "MM-dd-yyyy"), ($Component),($type),($PID)
+        try {
 
-        # write log string
-        $toLog | Out-File -Encoding default -Append -NoClobber -FilePath ("filesystem::{0}" -f $Global:LogFile) -ErrorAction Stop
-    } catch {
-       
-        if([Environment]::UserInteractive) {
-            Write-Error -Exception $Error[0].Exception
-        } else {
-            $eventLogParam = @{
-                LogName = "Application"
-                Source = "PowerShell-Toolkit"
-                EventId = "1111"
-                Message = "Unable to write to log file $($Global:LogFile). Exception was: $($Error[0].Exception)"
-                EntryType = "Error"
-            }
+            Write-Debug "Building Write-Log variables"
+            Write-Verbose "Building Write-Log variables"
+            # Build time variables
+            [string]$time = Get-Date -Format "HH:mm:ss.fff"
+
+            # Build time zone data
+            [string]$tzb = (Get-WmiObject -Query "Select Bias from Win32_TimeZone").Bias
+
+
+            Write-Debug "Building Write-Log message"
+            Write-Verbose "Building Write-Log message"
+            # Build string to log
+            [string]$toLog = "<![LOG[{0}]LOG]!><time=`"{1}`" date=`"{2}`" component=`"{3}`" context=`"`" type=`"{4}`" thread=`"{5}`" file=`"`">" -f ($Message), ("$time+$($tzb.SubString(1,3))"), (Get-Date -Format "MM-dd-yyyy"), ($Component),($type),($PID)
+
             
-            Write-EventLog @eventLogParam
+            Write-Debug "Writing to log file"
+            Write-Verbose "Writing to log file"
+            # Log string to log file
+            $toLog | Out-File -Encoding default -Append -NoClobber -FilePath ("filesystem::{0}" -f $Global:LogFile) -ErrorAction Stop
+        } catch {
+            if([Environment]::UserInteractive) {
+                Write-Error -Exception $Error[0].Exception
+            } else {
+                Write-Debug "Session isn't interactive."
+                $eventLogParam = @{
+                    LogName = "Application"
+                    Source = "Aetna-PowerShell-Toolkit"
+                    EventId = "1111"
+                    Message = "Unable to write to log file $($Global:LogFile). Exception was: $($Error[0].Exception)"
+                    EntryType = "Error"
+                }
+                                
+                Write-EventLog @eventLogParam
+            }
+
         }
+
+        Write-Debug "Finishing Write-Log Process"
+        Write-Verbose "Finishing Write-Log Process"
     }
+
+    End {}
+
 }
 
 <#
