@@ -1,16 +1,16 @@
-﻿<#
-.SYNOPSIS
-Short description
+﻿Function Start-Script {
+    
+    $component = $MyInvocation.MyCommand.Name
+   
+    Write-Log -Message "======================================================" -Component $component -type 1
+    Write-Log -Message "                 ---Starts Install--                     " -Component $component -type 1
+    Write-Log -Message "======================================================" -Component $component -type 1
 
-.DESCRIPTION
-Long description
+    $Global:exitCode = 0
 
-.EXAMPLE
-An example
+}
 
-.NOTES
-General notes
-#>
+
 Function Start-GlobalVariables {
 
     # Initiate Shell Applicaton
@@ -72,53 +72,47 @@ Function Start-GlobalVariables {
     $Global:windowsFolder = ($shellApp.Namespace(0x24)).Self.Path
 }
 
-<#
-.SYNOPSIS
-    Short description
 
-.DESCRIPTION
-    Long description
-
-.PARAMETER Message
-    Parameter description
-
-.PARAMETER Component
-    Parameter description
-
-.PARAMETER Type
-    Parameter description
-
-.EXAMPLE
-    An example
-
-.NOTES
-    General notes
-#>
 Function Write-Log {
     [CmdletBinding()]
     Param(
         [parameter(Mandatory=$true,
-                   ValueFromPipeline=$true,
-                   ValueFromPipelineByPropertyName=$true)]
-        [String]$Message,
+        ValueFromPipeline=$true,
+        ValueFromPipelineByPropertyName=$true)]
+        [String]
+        $Message,
 
         [parameter()]
-        [String]$Component = $MyInvocation.MyCommand.Name,
+        [String]
+        $Component = $MyInvocation.MyCommand.Name,
 
         [parameter()]
-        [int]$Type = 1
+        [int]
+        $Type = 1
     )
 
-    Begin {}
+    Begin {
+        if (!(Test-Path $Global:logDirectory)) {
+            try {
+                New-Item -Path  $Global:logDirectory -ItemType Directory -Force -ErrorAction Stop
+            } catch {
+                $eventLogParam = @{
+                    LogName = "Application"
+                    Source = "PowerShell-Toolkit"
+                    EventId = "1111"
+                    Message = "Unable to write create directory $Global:logDirectory. Exception was: $($Error[0].Exception)"
+                    EntryType = "Error"}
+                Write-EventLog @eventLogParam -Verbose
+            }
+        }
+    }
 
     Process {
-        Write-Debug "Starting Write-Log Process"
-        Write-Verbose "Starting Process"
+        Write-Verbose "Start Process"
 
         try {
 
-            Write-Debug "Building Write-Log variables"
-            Write-Verbose "Building Write-Log variables"
+            Write-Verbose "Start Try"
             # Build time variables
             [string]$time = Get-Date -Format "HH:mm:ss.fff"
 
@@ -126,21 +120,22 @@ Function Write-Log {
             [string]$tzb = (Get-WmiObject -Query "Select Bias from Win32_TimeZone").Bias
 
 
-            Write-Debug "Building Write-Log message"
             Write-Verbose "Building Write-Log message"
             # Build string to log
             [string]$toLog = "<![LOG[{0}]LOG]!><time=`"{1}`" date=`"{2}`" component=`"{3}`" context=`"`" type=`"{4}`" thread=`"{5}`" file=`"`">" -f ($Message), ("$time+$($tzb.SubString(1,3))"), (Get-Date -Format "MM-dd-yyyy"), ($Component),($type),($PID)
 
             
-            Write-Debug "Writing to log file"
             Write-Verbose "Writing to log file"
             # Log string to log file
             $toLog | Out-File -Encoding default -Append -NoClobber -FilePath ("filesystem::{0}" -f $Global:LogFile) -ErrorAction Stop
+
+            Write-Verbose "Stop Try"
         } catch {
+            Write-Verbose "Start Catch"
+
             if([Environment]::UserInteractive) {
                 Write-Error -Exception $Error[0].Exception
             } else {
-                Write-Debug "Session isn't interactive."
                 $eventLogParam = @{
                     LogName = "Application"
                     Source = "Aetna-PowerShell-Toolkit"
@@ -148,94 +143,106 @@ Function Write-Log {
                     Message = "Unable to write to log file $($Global:LogFile). Exception was: $($Error[0].Exception)"
                     EntryType = "Error"
                 }
-                                
+                Write-Verbose "Logging to event log: $($Error[0].Exception)"
                 Write-EventLog @eventLogParam
             }
 
+            Write-Verbose "Stop Catch"
         }
 
-        Write-Debug "Finishing Write-Log Process"
-        Write-Verbose "Finishing Write-Log Process"
+        Write-Verbose "Stop Process"
     }
 
-    End {}
-
+    End {
+        Write-Verbose "Start End"
+        Write-Verbose "Stop End"
+    }
 }
 
-<#
-.SYNOPSIS
-Short description
 
-.DESCRIPTION
-Long description
-
-.PARAMETER FilePath
-Parameter description
-
-.PARAMETER Parameters
-Parameter description
-
-.EXAMPLE
-An example
-
-.NOTES
-General notes
-#>
-Function Start-Operation {
+Function Execute-Process {
+    [CmdletBinding()]
     Param (
-        [Parameter()]
-        [string]$FilePath,
-        [Parameter()]
-        [string]$Parameters
+        [parameter(Mandatory=$true,
+        ValueFromPipeline=$true,
+        ValueFromPipelineByPropertyName=$true)]
+        [String]
+        $Path,
+
+        [parameter(Mandatory=$false)]
+        [AllowEmptyString()]
+        [String]
+        $Parameters,
+        
+        [parameter(Mandatory=$false)]
+        [AllowEmptyString()]
+        [string]
+        $WorkingDirectory
     )
 
-    $component = $MyInvocation.MyCommand.Name
-
-    try {
-        $startExec = New-Object System.Diagnostics.ProcessStartInfo
-        $startExec.FileName = $FilePath
-        $startExec.Arguments = $Parameters
-        $startExec.CreateNoWindow = $false
-        $startExec.UseShellExecute = $false
-
-        Write-Log -Message "Executing: `"$FilePath`" $Parameters" -Component $component -Type 1
-
-        $exec = New-Object System.Diagnostics.Process
-        $exec.StartInfo = $startExec
-        $exec.Start() | Out-Null
-        $exec.WaitForExit()
-
-        $Global:exitCode =$exec.ExitCode
-
-        Write-Log -Message "Execution exit code: $exitCode" -Component $component -Type 1
+    begin {
+        Write-Verbose "Begin"
         
-    } catch {
-        Write-Log -Message "Unable to start process. Error message was: $($Error[0].Exception)" -component $component -type 3
+        $component = $MyInvocation.MyCommand.Name
+
+        if (!(Test-Path $Path)) {
+            $Global:exitCode = 2 # The system cannot find the file specified.
+
+            Write-Verbose "Error: $exitCode File path does not exist: `"$Path`""
+            Write-Log -Message "File path does not exist: `"$Path`"" -Component $component -Type 3
+            
+            exit($exitCode)
+        }
+    } process {
+        
+        Write-Verbose "Process"
+
+        try {
+            Write-Verbose "Start Try"
+
+            $startExec = New-Object System.Diagnostics.ProcessStartInfo
+            $startExec.FileName = $Path
+            $startExec.Arguments = $Parameters
+            $startExec.WorkingDirectory = $WorkingDirectory
+            $startExec.UseShellExecute = $false
+
+            Write-Log -Message "Executing: `"$Path`"" -Component $component -Type 1
+            Write-Log -Message "Parameters: `"$Parameters`"" -Component $component -Type 1
+            Write-Log -Message "Working Directory: `"$WorkingDirectory`"" -Component $component -Type 1
+
+            Write-Verbose "Executing: `"$Path`""
+            Write-Verbose "Parameters: `"$Parameters`""
+            Write-Verbose "Working Directory: `"$WorkingDirectory`""
+
+            $exec = New-Object System.Diagnostics.Process
+            $exec.StartInfo = $startExec
+            $exec.Start() | Out-Null
+            $exec.WaitForExit()
+
+            $Global:exitCode = $exec.ExitCode
+
+            Write-Verbose "Stop Try"
+
+        
+        } catch {
+            Write-Verbose "Exception Caught"
+            Write-Verbose "Message: $($Error[0].Exception)"
+            Write-Log -Message "Unable to execute process." -component $component -type 3
+            Write-Log -Message "Error message: $($Error[0].Exception)" -component $component -type 3
+        }
+    } end {
+        Write-Verbose "End"
+        Write-Verbose "Exit Code: $exitCode"
+        if ($exitCode -ne 0) {
+            Write-Log -Message "$component did not exit with a 0 exit code" -Component $component -Type 3
+            Write-Log -Message "Exit code was $exitCode" -Component $component -Type 3
+        } else {
+            Write-Log -Message "Exit code was $exitCode" -Component $component -Type 1
+        }
     }
 }
 
-<#
-.SYNOPSIS
-Short description
 
-.DESCRIPTION
-Long description
-
-.PARAMETER Source
-Parameter description
-
-.PARAMETER Target
-Parameter description
-
-.PARAMETER Overwrite
-Parameter description
-
-.EXAMPLE
-An example
-
-.NOTES
-General notes
-#>
 Function Copy-File {
     Param (
         [Parameter()]
@@ -279,22 +286,7 @@ Function Copy-File {
     }  
 }
 
-<#
-.SYNOPSIS
-Short description
 
-.DESCRIPTION
-Long description
-
-.PARAMETER Path
-Parameter description
-
-.EXAMPLE
-An example
-
-.NOTES
-General notes
-#>
 Function Set-Permissions {
     param (
         [Parameter()]
@@ -313,22 +305,7 @@ Function Set-Permissions {
     }
 }
 
-<#
-.SYNOPSIS
-Short description
 
-.DESCRIPTION
-Long description
-
-.PARAMETER Path
-Parameter description
-
-.EXAMPLE
-An example
-
-.NOTES
-General notes
-#>
 Function Remove-File {
     Param (
         [Parameter()]
@@ -350,22 +327,6 @@ Function Remove-File {
 }
 
 
-<#
-.SYNOPSIS
-Short description
-
-.DESCRIPTION
-Long description
-
-.PARAMETER Path
-Parameter description
-
-.EXAMPLE
-An example
-
-.NOTES
-General notes
-#>
 Function Remove-Directory {
     Param (
         [Parameter()]
@@ -386,22 +347,7 @@ Function Remove-Directory {
     }
 }
 
-<#
-.SYNOPSIS
-Short description
 
-.DESCRIPTION
-Long description
-
-.PARAMETER Path
-Parameter description
-
-.EXAMPLE
-An example
-
-.NOTES
-General notes
-#>
 Function Test-FileLocked {
     Param (
         [string]$Path
@@ -417,22 +363,6 @@ Function Test-FileLocked {
 }
 
 
-<#
-.SYNOPSIS
-Short description
-
-.DESCRIPTION
-Long description
-
-.PARAMETER ProductGUID
-Parameter description
-
-.EXAMPLE
-An example
-
-.NOTES
-General notes
-#>
 Function Get-MSI {
     Param (
         [Parameter()]
@@ -454,4 +384,26 @@ Function Get-MSI {
         Write-Log "MSI Prodcut Code: $ProductGUID not found" -Component $component -Type 1
         return $false
     }
+}
+
+Function Finish-Script {
+    [CmdletBinding()]
+    Param(
+        [parameter()]
+        [int]
+        $ExitCode
+    )
+
+    $component = $MyInvocation.MyCommand.Name
+
+    if ($ExitCode -ne 0) {
+        Write-Log -Message "Exit code: $ExitCode" -Component $component -Type 3
+    } else {
+        Write-Log -Message "Exit code: $ExitCode" -Component $component -Type 1
+    }
+
+    Write-Log -Message "--------------------End Install--------------------------" -Component $component -Type 1
+
+    Exit $ExitCode
+
 }
